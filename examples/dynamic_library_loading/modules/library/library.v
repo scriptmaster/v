@@ -15,5 +15,5 @@ pub fn add_1(x int, y int) int {
 
 // this function is not exported and will not be visible to external programs.
 fn my_private_function(x int) int {
-	return 1 + x
+	return 10000 + x
 }
