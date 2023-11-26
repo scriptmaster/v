@@ -7,12 +7,16 @@ fn main() {
 	println('     -l      - act as a server and listen')
 	println('     -p XXXX - custom port number')
 	println('------------------------------------------')
+
 	is_server := '-l' in os.args
+
 	port := cmdline.option(os.args, '-p', '40001').int()
 	mut buf := []u8{len: 100}
+
 	if is_server {
 		println('UDP echo server, listening for udp packets on port: ${port}')
 		mut c := net.listen_udp('0.0.0.0:${port}')!
+
 		for {
 			read, addr := c.read(mut buf) or { continue }
 			println('received ${read} bytes from ${addr}')
