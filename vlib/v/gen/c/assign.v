@@ -215,7 +215,7 @@ fn (mut g Gen) assign_stmt(node_ ast.AssignStmt) {
 		mut gen_or := false
 		mut blank_assign := false
 		mut ident := ast.Ident{
-			scope: 0
+			scope: unsafe { nil }
 		}
 		left_sym := g.table.sym(g.unwrap_generic(var_type))
 		if mut left is ast.Ident {
@@ -552,7 +552,7 @@ fn (mut g Gen) assign_stmt(node_ ast.AssignStmt) {
 					''
 				}
 
-				fn_name := c_name(g.get_ternary_name(ident.name))
+				fn_name := c_fn_name(g.get_ternary_name(ident.name))
 				g.write('${ret_styp} (${msvc_call_conv}*${fn_name}) (')
 				def_pos := g.definitions.len
 				g.fn_decl_params(func.func.params, unsafe { nil }, false)
@@ -781,7 +781,7 @@ fn (mut g Gen) gen_multi_return_assign(node &ast.AssignStmt, return_type ast.Typ
 	for i, lx in node.left {
 		mut is_auto_heap := false
 		mut ident := ast.Ident{
-			scope: 0
+			scope: unsafe { nil }
 		}
 		if lx is ast.Ident {
 			ident = lx

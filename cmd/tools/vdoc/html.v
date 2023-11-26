@@ -12,18 +12,17 @@ import v.doc
 import v.pref
 import v.util { tabs }
 
-const (
-	css_js_assets               = ['doc.css', 'normalize.css', 'doc.js', 'dark-mode.js']
-	default_theme               = os.resource_abs_path('theme')
-	link_svg                    = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>'
+const css_js_assets = ['doc.css', 'normalize.css', 'doc.js', 'dark-mode.js']
+const default_theme = os.resource_abs_path('theme')
+const link_svg = '<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24"><path d="M0 0h24v24H0z" fill="none"/><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>'
 
-	single_quote                = "'"
-	double_quote                = '"'
-	no_quotes_replacement       = [single_quote, '', double_quote, '']
+const single_quote = "'"
+const double_quote = '"'
+const no_quotes_replacement = [single_quote, '', double_quote, '']
 
-	html_tag_escape_replacement = ['<', '&lt;', '>', '&gt;']
-	html_tag_escape_re          = regex.regex_opt(r'`.+[(&lt;)(&gt;)].+`') or { panic(err) }
-)
+const html_tag_escape_re = regex.regex_opt(r'`.+[(&lt;)(&gt;)].+`') or { panic(err) }
+const html_tag_escape_seq = ['<', '&lt;', '>', '&gt;']
+const md_script_escape_seq = ['<script>', '`', '</script>', '`']
 
 enum HighlightTokenTyp {
 	unone
@@ -198,11 +197,14 @@ fn (vd VDoc) gen_html(d doc.Doc) string {
 	}
 	for cn in dcs_contents {
 		vd.write_content(&cn, &d, mut contents)
-		write_toc(cn, mut symbols_toc)
-	} // write head
+		write_toc(cn, mut symbols_toc) // write head
+	}
+	if cfg.html_only_contents {
+		// no need for theming, styling etc, useful for testing and for external documentation generators
+		return contents.str()
+	}
+
 	// write css
-	mut version := if vd.manifest.version.len != 0 { vd.manifest.version } else { '' }
-	version = [version, @VCURRENTHASH].join(' ')
 	header_name := if cfg.is_multi && vd.docs.len > 1 {
 		os.file_name(os.real_path(cfg.input_path))
 	} else {
@@ -210,14 +212,13 @@ fn (vd VDoc) gen_html(d doc.Doc) string {
 	}
 	// write nav1
 	if cfg.is_multi || vd.docs.len > 1 {
-		mut used_submod_prefix := []string{}
-		for i, dc in vd.docs {
-			names := dc.head.name.split('.')
-			submod_prefix := if names.len > 1 { names[0] } else { dc.head.name }
-			if i - 1 >= 0 && submod_prefix in used_submod_prefix {
+		mut used_submod_prefixes := map[string]bool{}
+		for dc in vd.docs {
+			submod_prefix := dc.head.name.all_before('.')
+			if used_submod_prefixes[submod_prefix] {
 				continue
 			}
-			used_submod_prefix << submod_prefix
+			used_submod_prefixes[submod_prefix] = true
 			mut href_name := './${dc.head.name}.html'
 			if (cfg.is_vlib && dc.head.name == 'builtin' && !cfg.include_readme)
 				|| dc.head.name == 'README' {
@@ -249,33 +250,65 @@ fn (vd VDoc) gen_html(d doc.Doc) string {
 	}
 	modules_toc_str := modules_toc.str()
 	symbols_toc_str := symbols_toc.str()
-	result := (os.read_file(os.join_path(cfg.theme_dir, 'index.html')) or { panic(err) }).replace('{{ title }}',
-		d.head.name).replace('{{ head_name }}', header_name).replace('{{ version }}',
-		version).replace('{{ light_icon }}', vd.assets['light_icon']).replace('{{ dark_icon }}',
-		vd.assets['dark_icon']).replace('{{ menu_icon }}', vd.assets['menu_icon']).replace('{{ head_assets }}',
-		if cfg.inline_assets {
-		'<style>${vd.assets['doc_css']}</style>
+	mut result := os.read_file(os.join_path(cfg.theme_dir, 'index.html')) or { panic(err) }
+	if cfg.html_no_vhash {
+		result = result.replace('{{ version }}', 'latest')
+	} else {
+		mut version := if vd.manifest.version.len != 0 { vd.manifest.version } else { '' }
+		version = [version, @VCURRENTHASH].join(' ')
+		result = result.replace('{{ version }}', version)
+	}
+	result = result.replace('{{ title }}', d.head.name)
+	result = result.replace('{{ head_name }}', header_name)
+	result = result.replace('{{ light_icon }}', vd.assets['light_icon'])
+	result = result.replace('{{ dark_icon }}', vd.assets['dark_icon'])
+	result = result.replace('{{ menu_icon }}', vd.assets['menu_icon'])
+	if cfg.html_no_assets {
+		result = result.replace('{{ head_assets }}', '')
+	} else {
+		result = result.replace('{{ head_assets }}', if cfg.inline_assets {
+			'<style>${vd.assets['doc_css']}</style>
 ${tabs(2)}<style>${vd.assets['normalize_css']}</style>
 ${tabs(2)}<script>${vd.assets['dark_mode_js']}</script>'
-	} else {
-		'<link rel="stylesheet" href="${vd.assets['doc_css']}" />
+		} else {
+			'<link rel="stylesheet" href="${vd.assets['doc_css']}" />
 ${tabs(2)}<link rel="stylesheet" href="${vd.assets['normalize_css']}" />
 ${tabs(2)}<script src="${vd.assets['dark_mode_js']}"></script>'
-	}).replace('{{ toc_links }}', if cfg.is_multi || vd.docs.len > 1 {
-		modules_toc_str
+		})
+	}
+	if cfg.html_no_toc_urls {
+		result = result.replace('{{ toc_links }}', '')
 	} else {
-		symbols_toc_str
-	}).replace('{{ contents }}', contents.str()).replace('{{ right_content }}', if cfg.is_multi
-		&& d.head.name != 'README' {
-		'<div class="doc-toc"><ul>${symbols_toc_str}</ul></div>'
+		result = result.replace('{{ toc_links }}', if cfg.is_multi || vd.docs.len > 1 {
+			modules_toc_str
+		} else {
+			symbols_toc_str
+		})
+	}
+	result = result.replace('{{ contents }}', contents.str())
+	if cfg.html_no_right {
+		result = result.replace('{{ right_content }}', '')
 	} else {
-		''
-	}).replace('{{ footer_content }}', gen_footer_text(d, !cfg.no_timestamp)).replace('{{ footer_assets }}',
-		if cfg.inline_assets {
-		'<script>${vd.assets['doc_js']}</script>'
+		result = result.replace('{{ right_content }}', if cfg.is_multi && d.head.name != 'README' {
+			'<div class="doc-toc"><ul>${symbols_toc_str}</ul></div>'
+		} else {
+			''
+		})
+	}
+	if cfg.html_no_footer {
+		result = result.replace('{{ footer_content }}', '')
 	} else {
-		'<script src="${vd.assets['doc_js']}"></script>'
-	})
+		result = result.replace('{{ footer_content }}', gen_footer_text(d, !cfg.no_timestamp))
+	}
+	if cfg.html_no_assets {
+		result = result.replace('{{ footer_assets }}', '')
+	} else {
+		result = result.replace('{{ footer_assets }}', if cfg.inline_assets {
+			'<script>${vd.assets['doc_js']}</script>'
+		} else {
+			'<script src="${vd.assets['doc_js']}"></script>'
+		})
+	}
 	return result
 }
 
@@ -389,8 +422,7 @@ fn doc_node_html(dn doc.DocNode, link string, head bool, include_examples bool, 
 	// Allow README.md to go through unescaped except for script tags
 	escaped_html := if head && is_module_readme(dn) {
 		// Strip markdown [TOC] directives, since we generate our own.
-		stripped := comments.replace('[TOC]', '')
-		markdown_escape_script_tags(stripped)
+		comments.replace('[TOC]', '').replace_each(md_script_escape_seq)
 	} else {
 		html_tag_escape(comments)
 	}
@@ -459,7 +491,7 @@ fn doc_node_html(dn doc.DocNode, link string, head bool, include_examples bool, 
 }
 
 fn html_tag_escape(str string) string {
-	escaped_string := str.replace_each(html_tag_escape_replacement)
+	escaped_string := str.replace_each(html_tag_escape_seq)
 	mut re := html_tag_escape_re
 	if re.find_all_str(escaped_string).len > 0 {
 		return str

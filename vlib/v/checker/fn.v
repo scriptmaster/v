@@ -336,7 +336,7 @@ fn (mut c Checker) fn_decl(mut node ast.FnDecl) {
 						node.params[1].typ) {
 						c.error('expected `${receiver_sym.name}` not `${param_sym.name}` - both operands must be the same type for operator overloading',
 							node.params[1].type_pos)
-					} else if node.name in ['<', '=='] && node.return_type != ast.bool_type {
+					} else if node.return_type != ast.bool_type && node.name in ['<', '=='] {
 						c.error('operator comparison methods should return `bool`', node.pos)
 					} else if parent_sym.is_primitive() {
 						// aliases of primitive types are explicitly allowed
@@ -591,7 +591,7 @@ fn (mut c Checker) call_expr(mut node ast.CallExpr) ast.Type {
 }
 
 fn (mut c Checker) builtin_args(mut node ast.CallExpr, fn_name string, func ast.Fn) {
-	c.inside_casting_to_str = true
+	c.inside_interface_deref = true
 	c.expected_type = ast.string_type
 	node.args[0].typ = c.expr(mut node.args[0].expr)
 	arg := node.args[0]
@@ -605,7 +605,7 @@ fn (mut c Checker) builtin_args(mut node ast.CallExpr, fn_name string, func ast.
 		c.error('`${fn_name}` cannot print variadic values', node.pos)
 	}
 	c.fail_if_unreadable(arg.expr, arg.typ, 'argument to print')
-	c.inside_casting_to_str = false
+	c.inside_interface_deref = false
 	node.return_type = ast.void_type
 	c.set_node_expected_arg_types(mut node, func)
 
@@ -728,7 +728,7 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 			}
 		}
 		panic('unreachable')
-	} else if node.args.len > 0 && fn_name == 'json.encode' && node.args[0].typ.has_flag(.shared_f) {
+	} else if node.args.len > 0 && node.args[0].typ.has_flag(.shared_f) && fn_name == 'json.encode' {
 		c.error('json.encode cannot handle shared data', node.pos)
 		return ast.void_type
 	} else if node.args.len > 0 && fn_name == 'json.decode' {
@@ -801,7 +801,7 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 		}
 	}
 	// try prefix with current module as it would have never gotten prefixed
-	if !found && !fn_name.contains('.') && node.mod != 'builtin' {
+	if !found && node.mod != 'builtin' && !fn_name.contains('.') {
 		name_prefixed := '${node.mod}.${fn_name}'
 		if f := c.table.find_fn(name_prefixed) {
 			node.name = name_prefixed
@@ -1710,7 +1710,8 @@ fn (mut c Checker) method_call(mut node ast.CallExpr) ast.Type {
 		if !c.check_types(arg_type, info.elem_type) && !c.check_types(left_type, arg_type) {
 			c.error('cannot ${method_name} `${arg_sym.name}` to `${left_sym.name}`', arg_expr.pos())
 		}
-	} else if final_left_sym.kind == .array && method_name in ['first', 'last', 'pop'] {
+	} else if final_left_sym.kind == .array
+		&& method_name in ['filter', 'map', 'sort', 'sorted', 'contains', 'any', 'all', 'first', 'last', 'pop'] {
 		return c.array_builtin_method_call(mut node, left_type, final_left_sym)
 	} else if c.pref.backend.is_js() && left_sym.name.starts_with('Promise[')
 		&& method_name == 'wait' {
@@ -1761,6 +1762,10 @@ fn (mut c Checker) method_call(mut node ast.CallExpr) ast.Type {
 	if m := c.table.find_method(left_sym, method_name) {
 		method = m
 		has_method = true
+		if left_sym.kind == .interface_ && m.from_embeded_type != 0 {
+			is_method_from_embed = true
+			node.from_embed_types = [m.from_embeded_type]
+		}
 	} else {
 		if final_left_sym.kind in [.struct_, .sum_type, .interface_, .alias, .array] {
 			mut parent_type := ast.void_type
@@ -2567,10 +2572,10 @@ fn (mut c Checker) map_builtin_method_call(mut node ast.CallExpr, left_type ast.
 				c.table.find_or_register_array(info.value_type)
 			}
 			ret_type = ast.Type(typ)
-			if method_name == 'keys' && info.key_type.has_flag(.generic) {
+			if info.key_type.has_flag(.generic) && method_name == 'keys' {
 				ret_type = ret_type.set_flag(.generic)
 			}
-			if method_name == 'values' && info.value_type.has_flag(.generic) {
+			if info.value_type.has_flag(.generic) && method_name == 'values' {
 				ret_type = ret_type.set_flag(.generic)
 			}
 		}
@@ -2609,14 +2614,16 @@ fn (mut c Checker) ensure_same_array_return_type(mut node ast.CallExpr, left_typ
 fn (mut c Checker) array_builtin_method_call(mut node ast.CallExpr, left_type ast.Type, left_sym ast.TypeSymbol) ast.Type {
 	method_name := node.name
 	mut elem_typ := ast.void_type
-	if method_name == 'slice' && !c.is_builtin_mod {
+	if !c.is_builtin_mod && method_name == 'slice' {
 		c.error('.slice() is a private method, use `x[start..end]` instead', node.pos)
 		return ast.void_type
 	}
+	unwrapped_left_type := c.unwrap_generic(left_type)
+	unaliased_left_type := c.table.unaliased_type(unwrapped_left_type)
 	array_info := if left_sym.info is ast.Array {
 		left_sym.info as ast.Array
 	} else {
-		c.table.sym(c.unwrap_generic(left_type)).info as ast.Array
+		c.table.sym(unaliased_left_type).info as ast.Array
 	}
 	elem_typ = array_info.elem_type
 	if method_name in ['filter', 'map', 'any', 'all'] {
@@ -2639,7 +2646,7 @@ fn (mut c Checker) array_builtin_method_call(mut node ast.CallExpr, left_type as
 			// position of `it` doesn't matter
 			scope_register_it(mut node.scope, node.pos, elem_typ)
 		}
-	} else if method_name == 'sorted_with_compare' && node.args.len == 1 {
+	} else if node.args.len == 1 && method_name == 'sorted_with_compare' {
 		if node.args.len > 0 && mut node.args[0].expr is ast.LambdaExpr {
 			c.support_lambda_expr_in_sort(elem_typ.ref(), ast.int_type, mut node.args[0].expr)
 		}
@@ -2708,7 +2715,7 @@ fn (mut c Checker) array_builtin_method_call(mut node ast.CallExpr, left_type as
 		}
 	}
 	// map/filter are supposed to have 1 arg only
-	mut arg_type := left_type
+	mut arg_type := unaliased_left_type
 	for mut arg in node.args {
 		arg_type = c.check_expr_opt_call(arg.expr, c.expr(mut arg.expr))
 	}
@@ -2810,7 +2817,7 @@ fn (mut c Checker) array_builtin_method_call(mut node ast.CallExpr, left_type as
 		}
 	} else if method_name == 'delete' {
 		c.fail_if_immutable(mut node.left)
-		unwrapped_left_sym := c.table.sym(c.unwrap_generic(left_type))
+		unwrapped_left_sym := c.table.sym(unwrapped_left_type)
 		if method := c.table.find_method(unwrapped_left_sym, method_name) {
 			node.receiver_type = method.receiver_type
 		}

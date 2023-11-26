@@ -6,11 +6,9 @@ import v.ast
 import v.util
 import strings
 
-const (
-	// BUG: this const is not released from the memory! use a const for now
-	// si_s_code = "0x" + int(StrIntpType.si_s).hex() // code for a simple string
-	si_s_code = '0xfe10'
-)
+// BUG: this const is not released from the memory! use a const for now
+// si_s_code = "0x" + int(StrIntpType.si_s).hex() // code for a simple string
+const si_s_code = '0xfe10'
 
 fn (mut g Gen) gen_str_default(sym ast.TypeSymbol, styp string, str_fn_name string) {
 	$if trace_autostr ? {
@@ -523,7 +521,7 @@ fn (mut g Gen) gen_str_for_thread(info ast.Thread, styp string, str_fn_name stri
 	g.auto_str_funcs.writeln('static string ${str_fn_name}(${styp} _) { return _SLIT("thread(${ret_type_name})");}')
 }
 
-[inline]
+@[inline]
 fn styp_to_str_fn_name(styp string) string {
 	return styp.replace_each(['*', '', '.', '__', ' ', '__']) + '_str'
 }
@@ -1068,6 +1066,11 @@ fn struct_auto_str_func(sym &ast.TypeSymbol, lang ast.Language, _field_type ast.
 	} else if _field_type.has_flag(.option) || should_use_indent_func(sym.kind) {
 		obj := '${deref}it.${final_field_name}${sufix}'
 		if has_custom_str {
+			if sym.kind == .interface_ && (sym.info as ast.Interface).defines_method('str') {
+				iface_obj := 'it.${final_field_name}${sufix}'
+				dot := if field_type.is_ptr() { '->' } else { '.' }
+				return '${fn_name.trim_string_right('_str')}_name_table[${iface_obj}${dot}_typ]._method_str(${iface_obj}${dot}_object)', true
+			}
 			return '${fn_name}(${obj})', true
 		}
 		return 'indent_${fn_name}(${obj}, indent_count + 1)', true

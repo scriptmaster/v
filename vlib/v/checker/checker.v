@@ -13,34 +13,31 @@ import v.errors
 import v.pkgconfig
 import v.transformer
 
-const (
-	int_min                                        = int(0x80000000)
-	int_max                                        = int(0x7FFFFFFF)
-	// prevent stack overflows by restricting too deep recursion:
-	expr_level_cutoff_limit                        = 40
-	stmt_level_cutoff_limit                        = 40
-	iface_level_cutoff_limit                       = 100
-	generic_fn_cutoff_limit_per_fn                 = 10_000 // how many times post_process_generic_fns, can visit the same function before bailing out
-	generic_fn_postprocess_iterations_cutoff_limit = 1000_000 // how many times the compiler will try to resolve all remaining generic functions
-)
+const int_min = int(0x80000000)
+const int_max = int(0x7FFFFFFF)
+// prevent stack overflows by restricting too deep recursion:
+const expr_level_cutoff_limit = 40
+const stmt_level_cutoff_limit = 40
+const iface_level_cutoff_limit = 100
+const generic_fn_cutoff_limit_per_fn = 10_000 // how many times post_process_generic_fns, can visit the same function before bailing out
 
-pub const (
-	// array_builtin_methods contains a list of all methods on array, that return other typed arrays,
-	// i.e. that act as *pseudogeneric* methods, that need compiler support, so that the types of the results
-	// are properly checked.
-	// Note that methods that do not return anything, or that return known types, are not listed here, since they are just ordinary non generic methods.
-	array_builtin_methods       = ['filter', 'clone', 'repeat', 'reverse', 'map', 'slice', 'sort',
-		'sorted', 'sorted_with_compare', 'contains', 'index', 'wait', 'any', 'all', 'first', 'last',
-		'pop', 'delete']
-	array_builtin_methods_chk   = token.new_keywords_matcher_from_array_trie(array_builtin_methods)
-	// TODO: remove `byte` from this list when it is no longer supported
-	reserved_type_names         = ['byte', 'bool', 'char', 'i8', 'i16', 'int', 'i64', 'u8', 'u16',
-		'u32', 'u64', 'f32', 'f64', 'map', 'string', 'rune', 'usize', 'isize', 'voidptr', 'thread']
-	reserved_type_names_chk     = token.new_keywords_matcher_from_array_trie(reserved_type_names)
-	vroot_is_deprecated_message = '@VROOT is deprecated, use @VMODROOT or @VEXEROOT instead'
-)
+const generic_fn_postprocess_iterations_cutoff_limit = 1000_000
 
-[heap; minify]
+// array_builtin_methods contains a list of all methods on array, that return other typed arrays,
+// i.e. that act as *pseudogeneric* methods, that need compiler support, so that the types of the results
+// are properly checked.
+// Note that methods that do not return anything, or that return known types, are not listed here, since they are just ordinary non generic methods.
+pub const array_builtin_methods = ['filter', 'clone', 'repeat', 'reverse', 'map', 'slice', 'sort',
+	'sorted', 'sorted_with_compare', 'contains', 'index', 'wait', 'any', 'all', 'first', 'last',
+	'pop', 'delete']
+pub const array_builtin_methods_chk = token.new_keywords_matcher_from_array_trie(array_builtin_methods)
+// TODO: remove `byte` from this list when it is no longer supported
+pub const reserved_type_names = ['byte', 'bool', 'char', 'i8', 'i16', 'int', 'i64', 'u8', 'u16',
+	'u32', 'u64', 'f32', 'f64', 'map', 'string', 'rune', 'usize', 'isize', 'voidptr', 'thread']
+pub const reserved_type_names_chk = token.new_keywords_matcher_from_array_trie(reserved_type_names)
+pub const vroot_is_deprecated_message = '@VROOT is deprecated, use @VMODROOT or @VEXEROOT instead'
+
+@[heap; minify]
 pub struct Checker {
 pub mut:
 	pref &pref.Preferences = unsafe { nil } // Preferences shared from V struct
@@ -125,7 +122,7 @@ mut:
 	need_recheck_generic_fns         bool // need recheck generic fns because there are cascaded nested generic fn
 	inside_sql                       bool // to handle sql table fields pseudo variables
 	inside_selector_expr             bool
-	inside_casting_to_str            bool
+	inside_interface_deref           bool
 	inside_decl_rhs                  bool
 	inside_if_guard                  bool // true inside the guard condition of `if x := opt() {}`
 	inside_assign                    bool
@@ -135,6 +132,7 @@ mut:
 	comptime_call_pos int // needed for correctly checking use before decl for templates
 	goto_labels       map[string]ast.GotoLabel // to check for unused goto labels
 	enum_data_type    ast.Type
+	field_data_type   ast.Type
 	fn_return_type    ast.Type
 	orm_table_fields  map[string][]ast.StructField // known table structs
 	//
@@ -183,7 +181,7 @@ fn (mut c Checker) reset_checker_state_at_start_of_new_file() {
 	c.loop_label = ''
 	c.using_new_err_struct = false
 	c.inside_selector_expr = false
-	c.inside_casting_to_str = false
+	c.inside_interface_deref = false
 	c.inside_decl_rhs = false
 	c.inside_if_guard = false
 	c.error_details.clear()
@@ -221,7 +219,7 @@ pub fn (mut c Checker) check(mut ast_file ast.File) {
 			} else if ast_import.mod == ast_file.imports[j].alias {
 				c.error('`${ast_file.imports[j].mod}` was already imported as `${ast_import.alias}` on line ${
 					ast_file.imports[j].mod_pos.line_nr + 1}', ast_import.mod_pos)
-			} else if ast_import.alias == ast_file.imports[j].alias {
+			} else if ast_import.alias != '_' && ast_import.alias == ast_file.imports[j].alias {
 				c.error('`${ast_file.imports[j].mod}` was already imported on line ${
 					ast_file.imports[j].alias_pos.line_nr + 1}', ast_import.alias_pos)
 			}
@@ -334,7 +332,7 @@ pub fn (mut c Checker) check_files(ast_files []&ast.File) {
 					file: the_main_file.path
 					return_type: ast.void_type
 					scope: &ast.Scope{
-						parent: 0
+						parent: nil
 					}
 				}
 				has_main_fn = true
@@ -394,7 +392,7 @@ pub fn (mut c Checker) check_files(ast_files []&ast.File) {
 		}
 	}
 	// After the main checker run, run the line info check, print line info, and exit (if it's present)
-	if c.pref.line_info != '' && !c.pref.linfo.is_running { //'' && c.pref.linfo.line_nr == 0 {
+	if !c.pref.linfo.is_running && c.pref.line_info != '' { //'' && c.pref.linfo.line_nr == 0 {
 		// c.do_line_info(c.pref.line_info, ast_files)
 		println('setting is_running=true,  pref.path=${c.pref.linfo.path} curdir' + os.getwd())
 		c.pref.linfo.is_running = true
@@ -962,7 +960,7 @@ fn (mut c Checker) type_implements(typ ast.Type, interface_type ast.Type, pos to
 	styp := c.table.type_to_str(utyp)
 	typ_sym := c.table.sym(utyp)
 	mut inter_sym := c.table.sym(interface_type)
-	if inter_sym.mod !in [typ_sym.mod, c.mod] && !inter_sym.is_pub && typ_sym.mod != 'builtin' {
+	if !inter_sym.is_pub && inter_sym.mod !in [typ_sym.mod, c.mod] && typ_sym.mod != 'builtin' {
 		c.error('`${styp}` cannot implement private interface `${inter_sym.name}` of other module',
 			pos)
 		return false
@@ -1470,7 +1468,7 @@ fn (mut c Checker) selector_expr(mut node ast.SelectorExpr) ast.Type {
 		return ast.void_type
 	} else if c.inside_comptime_for_field && typ == c.enum_data_type && node.field_name == 'value' {
 		// for comp-time enum.values
-		node.expr_type = c.comptime_fields_type[c.comptime_for_field_var]
+		node.expr_type = c.comptime_fields_type['${c.comptime_for_field_var}.typ']
 		node.typ = typ
 		return node.expr_type
 	}
@@ -1957,7 +1955,7 @@ fn (mut c Checker) check_enum_field_integer_literal(expr ast.IntegerLiteral, is_
 	}
 }
 
-[inline]
+@[inline]
 fn (mut c Checker) check_loop_label(label string, pos token.Pos) {
 	if label.len == 0 {
 		// ignore
@@ -2020,7 +2018,7 @@ fn (mut c Checker) stmt(mut node ast.Stmt) {
 				if mut id.info is ast.IdentVar {
 					if id.comptime && id.name in ast.valid_comptime_not_user_defined {
 						node.defer_vars[i] = ast.Ident{
-							scope: 0
+							scope: unsafe { nil }
 							name: ''
 						}
 						continue
@@ -2320,7 +2318,7 @@ fn (mut c Checker) hash_stmt(mut node ast.HashStmt) {
 			c.error('hash statements are only allowed in backend specific files such "x.js.v" and "x.go.v"',
 				node.pos)
 		}
-		if c.mod == 'main' && c.pref.backend != .golang {
+		if c.pref.backend != .golang && c.mod == 'main' {
 			c.error('hash statements are not allowed in the main module. Place them in a separate module.',
 				node.pos)
 		}
@@ -3173,6 +3171,10 @@ fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 		snexpr := node.expr.str()
 		tt := c.table.type_to_str(to_type)
 		c.error('cannot cast string to `${tt}`, use `${snexpr}[index]` instead.', node.pos)
+	} else if final_from_sym.kind == .string && to_type.is_pointer() && !c.inside_unsafe {
+		tt := c.table.type_to_str(to_type)
+		c.error('cannot cast string to `${tt}` outside `unsafe`, use ${tt}(s.str) instead',
+			node.pos)
 	} else if final_from_sym.kind == .array && !from_type.is_ptr() && to_type != ast.string_type
 		&& !(to_type.has_flag(.option) && from_type.idx() == to_type.idx()) {
 		ft := c.table.type_to_str(from_type)
@@ -3569,7 +3571,7 @@ fn (mut c Checker) ident(mut node ast.Ident) ast.Type {
 							typ = c.expr(mut obj.expr)
 						}
 					}
-					if c.inside_casting_to_str && c.table.is_interface_var(obj) {
+					if c.inside_interface_deref && c.table.is_interface_var(obj) {
 						typ = typ.deref()
 					}
 					is_option := typ.has_flag(.option) || typ.has_flag(.result)
@@ -4314,7 +4316,8 @@ fn (mut c Checker) index_expr(mut node ast.IndexExpr) ast.Type {
 	}
 	is_aggregate_arr := typ_sym.kind == .aggregate
 		&& (typ_sym.info as ast.Aggregate).types.filter(c.table.type_kind(it) !in [.array, .array_fixed, .string, .map]).len == 0
-	if typ_sym.kind !in [.array, .array_fixed, .string, .map] && !typ.is_ptr()
+	if typ_sym.kind !in [.array, .array_fixed, .string, .map]
+		&& (!typ.is_ptr() || typ_sym.kind in [.sum_type, .interface_])
 		&& typ !in [ast.byteptr_type, ast.charptr_type] && !typ.has_flag(.variadic)
 		&& !is_aggregate_arr {
 		c.error('type `${typ_sym.name}` does not support indexing', node.pos)
@@ -4599,7 +4602,7 @@ fn (c &Checker) check_struct_signature(from ast.Struct, to ast.Struct) bool {
 fn (mut c Checker) fetch_field_name(field ast.StructField) string {
 	mut name := field.name
 	for attr in field.attrs {
-		if attr.kind == .string && attr.name == 'sql' && attr.arg != '' {
+		if attr.kind == .string && attr.arg != '' && attr.name == 'sql' {
 			name = attr.arg
 			break
 		}

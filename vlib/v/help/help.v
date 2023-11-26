@@ -2,6 +2,9 @@ module help
 
 import os
 
+// Topics whose module uses the cli module.
+const cli_topics = ['new', 'init']
+
 fn hdir(base string) string {
 	return os.join_path(base, 'vlib', 'v', 'help')
 }
@@ -19,13 +22,13 @@ fn help_dir() string {
 	return hdir(@VEXEROOT)
 }
 
-[params]
+@[params]
 pub struct ExitOptions {
 	exit_code int
 }
 
 // print_and_exit prints the help topic and exits.
-[noreturn]
+@[noreturn]
 pub fn print_and_exit(topic string, opts ExitOptions) {
 	if topic == 'topics' {
 		print_known_topics()
@@ -37,6 +40,10 @@ pub fn print_and_exit(topic string, opts ExitOptions) {
 			print_topic_unkown(topic)
 			exit(fail_code)
 		}
+	}
+	if topic in help.cli_topics {
+		os.system('${@VEXE} ${topic} --help')
+		exit(opts.exit_code)
 	}
 	mut topic_path := ''
 	for path in os.walk_ext(help_dir(), '.txt') {

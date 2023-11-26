@@ -150,13 +150,13 @@ mut:
 pub type Node = C.cJSON
 
 // create an object node
-[inline]
+@[inline]
 fn new_object() &Node {
 	return C.cJSON_CreateObject()
 }
 
 // add item to object node
-[inline]
+@[inline]
 fn (node &Node) add(key string, child &Node) {
 	if context.hide_names.len > 0 && key in context.hide_names {
 		return
@@ -168,7 +168,7 @@ fn (node &Node) add(key string, child &Node) {
 }
 
 // add item to object node
-[inline]
+@[inline]
 fn (node &Node) add_terse(key string, child &Node) {
 	if context.hide_names.len > 0 && key in context.hide_names {
 		return
@@ -177,13 +177,13 @@ fn (node &Node) add_terse(key string, child &Node) {
 }
 
 // create an array node
-[inline]
+@[inline]
 fn new_array() &Node {
 	return C.cJSON_CreateArray()
 }
 
 // add item to array node
-[inline]
+@[inline]
 fn (node &Node) add_item(child &Node) {
 	add_item_to_array(node, child)
 }
@@ -707,12 +707,14 @@ fn (t Tree) attr(node ast.Attr) &Node {
 	obj.add_terse('ast_type', t.string_node('Attr'))
 	obj.add_terse('name', t.string_node(node.name))
 	obj.add_terse('has_arg', t.bool_node(node.has_arg))
+	obj.add_terse('arg', t.string_node(node.arg))
 	obj.add_terse('kind', t.enum_node(node.kind))
-	obj.add_terse('ct_expr', t.expr(node.ct_expr))
 	obj.add_terse('ct_opt', t.bool_node(node.ct_opt))
+	obj.add_terse('has_at', t.bool_node(node.has_at))
+	obj.add_terse('ct_expr', t.expr(node.ct_expr))
 	obj.add_terse('ct_evaled', t.bool_node(node.ct_evaled))
 	obj.add_terse('ct_skip', t.bool_node(node.ct_skip))
-	obj.add_terse('arg', t.string_node(node.arg))
+	obj.add('pos', t.pos(node.pos))
 	return obj
 }
 

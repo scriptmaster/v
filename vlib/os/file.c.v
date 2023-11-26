@@ -259,6 +259,7 @@ pub fn (f &File) read(mut buf []u8) !int {
 }
 
 // **************************** Write ops  ***************************
+
 // write implements the Writer interface.
 // It returns how many bytes were actually written.
 pub fn (mut f File) write(buf []u8) !int {
@@ -355,14 +356,14 @@ pub fn (mut f File) write_to(pos u64, buf []u8) !int {
 // write_ptr writes `size` bytes to the file, starting from the address in `data`.
 // Note: write_ptr is unsafe and should be used carefully, since if you pass invalid
 // pointers to it, it will cause your programs to segfault.
-[unsafe]
+@[unsafe]
 pub fn (mut f File) write_ptr(data voidptr, size int) int {
 	return int(C.fwrite(data, 1, size, f.cfile))
 }
 
 // write_full_buffer writes a whole buffer of data to the file, starting from the
 // address in `buffer`, no matter how many tries/partial writes it would take.
-[unsafe]
+@[unsafe]
 pub fn (mut f File) write_full_buffer(buffer voidptr, buffer_len usize) ! {
 	if buffer_len <= usize(0) {
 		return
@@ -388,7 +389,7 @@ pub fn (mut f File) write_full_buffer(buffer voidptr, buffer_len usize) ! {
 // at byte offset `pos`, counting from the start of the file (pos 0).
 // Note: write_ptr_at is unsafe and should be used carefully, since if you pass invalid
 // pointers to it, it will cause your programs to segfault.
-[unsafe]
+@[unsafe]
 pub fn (mut f File) write_ptr_at(data voidptr, size int, pos u64) int {
 	$if x64 {
 		$if windows {
@@ -559,6 +560,7 @@ pub fn (f &File) read_into_ptr(ptr &u8, max_size int) !int {
 }
 
 // **************************** Utility  ops ***********************
+
 // flush writes any buffered unwritten data left in the file stream.
 pub fn (mut f File) flush() {
 	if !f.is_opened {

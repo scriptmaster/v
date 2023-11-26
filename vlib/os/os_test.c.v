@@ -1,12 +1,10 @@
 import os
 import time
 
-const (
-	// tfolder will contain all the temporary files/subfolders made by
-	// the different tests. It would be removed in testsuite_end(), so
-	// individual os tests do not need to clean up after themselves.
-	tfolder = os.join_path(os.vtmp_dir(), 'tests', 'os_test')
-)
+// tfolder will contain all the temporary files/subfolders made by
+// the different tests. It would be removed in testsuite_end(), so
+// individual os tests do not need to clean up after themselves.
+const tfolder = os.join_path(os.vtmp_dir(), 'tests', 'os_test')
 
 // os.args has to be *already initialized* with the program's argc/argv at this point
 // thus it can be used for other consts too:
@@ -611,9 +609,13 @@ fn test_file_ext() {
 fn test_join() {
 	$if windows {
 		assert os.join_path('v', 'vlib', 'os') == 'v\\vlib\\os'
+		assert os.join_path('', 'f1', 'f2') == 'f1\\f2'
+		assert os.join_path('v', '', 'dir') == 'v\\dir'
 	} $else {
 		assert os.join_path('v', 'vlib', 'os') == 'v/vlib/os'
 		assert os.join_path('/foo/bar', './file.txt') == '/foo/bar/file.txt'
+		assert os.join_path('', 'f1', 'f2') == 'f1/f2'
+		assert os.join_path('v', '', 'dir') == 'v/dir'
 	}
 }
 
