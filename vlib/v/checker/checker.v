@@ -112,7 +112,11 @@ mut:
 	comptime_fields_default_type     ast.Type
 	comptime_fields_type             map[string]ast.Type
 	comptime_for_field_value         ast.StructField // value of the field variable
-	comptime_enum_field_value        string // current enum value name
+	comptime_enum_field_value        string   // current enum value name
+	comptime_for_method              string   // $for method in T.methods {}
+	comptime_for_method_var          string   // $for method in T.methods {}; the variable name
+	comptime_for_method_ret_type     ast.Type // $for method - current method.return_type field
+	comptime_values_stack            []CurrentComptimeValues // stores the values from the above on each $for loop, to make nesting them easier
 	fn_scope                         &ast.Scope = unsafe { nil }
 	main_fn_decl_node                ast.FnDecl
 	match_exhaustive_cutoff_limit    int = 10
@@ -477,7 +481,7 @@ fn (mut c Checker) check_valid_snake_case(name string, identifier string, pos to
 }
 
 fn stripped_name(name string) string {
-	idx := name.last_index('.') or { -1 }
+	idx := name.index_last('.') or { -1 }
 	return name[(idx + 1)..]
 }
 
@@ -4352,18 +4356,26 @@ fn (mut c Checker) index_expr(mut node ast.IndexExpr) ast.Type {
 		}
 	}
 
-	if (typ.is_ptr() && !typ.has_flag(.shared_f) && !node.left.is_auto_deref_var())
+	if (typ.is_ptr() && !typ.has_flag(.shared_f) && (!node.left.is_auto_deref_var()
+		|| (typ_sym.kind == .struct_ && typ_sym.name != 'array')))
 		|| typ.is_pointer() {
 		mut is_ok := false
+		mut is_mut_struct := false
 		if mut node.left is ast.Ident {
 			if mut node.left.obj is ast.Var {
 				// `mut param []T` function parameter
 				is_ok = node.left.obj.is_mut && node.left.obj.is_arg && !typ.deref().is_ptr()
+					&& typ_sym.kind != .struct_
+				// `mut param Struct`
+				is_mut_struct = node.left.obj.is_mut && node.left.obj.is_arg
+					&& typ_sym.kind == .struct_
 			}
 		}
 		if !is_ok && node.index is ast.RangeExpr {
 			s := c.table.type_to_str(typ)
 			c.error('type `${s}` does not support slicing', node.pos)
+		} else if is_mut_struct {
+			c.error('type `mut ${typ_sym.name}` does not support slicing', node.pos)
 		} else if !c.inside_unsafe && !is_ok && !c.pref.translated && !c.file.is_translated {
 			c.warn('pointer indexing is only allowed in `unsafe` blocks', node.pos)
 		}

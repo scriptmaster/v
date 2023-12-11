@@ -279,8 +279,8 @@ fn (mut c Checker) check_expected_call_arg(got ast.Type, expected_ ast.Type, lan
 		}
 	} else {
 		got_typ_sym := c.table.sym(c.unwrap_generic(got))
-		expected_typ_sym := c.table.sym(c.unwrap_generic(expected_))
-		if expected_typ_sym.kind == .interface_ && c.type_implements(got, expected_, token.Pos{}) {
+		expected_typ_sym := c.table.sym(c.unwrap_generic(expected))
+		if expected_typ_sym.kind == .interface_ && c.type_implements(got, expected, token.Pos{}) {
 			return
 		}
 
@@ -930,9 +930,7 @@ fn (mut c Checker) infer_fn_generic_types(func ast.Fn, mut node ast.CallExpr) {
 						}
 					}
 				}
-
-				if arg.expr.is_auto_deref_var()
-					|| (arg.expr is ast.ComptimeSelector && arg.expr.left.is_auto_deref_var()) {
+				if arg.expr.is_auto_deref_var() {
 					typ = typ.deref()
 				}
 				// resolve &T &&T ...

@@ -4245,44 +4245,56 @@ fn (mut g Gen) select_expr(node ast.SelectExpr) {
 		}
 	}
 	chan_array := g.new_tmp_var()
-	g.write('Array_sync__Channel_ptr ${chan_array} = new_array_from_c_array(${n_channels}, ${n_channels}, sizeof(sync__Channel*), _MOV((sync__Channel*[${n_channels}]){')
-	for i in 0 .. n_channels {
-		if i > 0 {
-			g.write(', ')
+	if n_channels == 0 {
+		g.writeln('Array_sync__Channel_ptr ${chan_array} = __new_array_with_default(0, 0, sizeof(sync__Channel*), 0);')
+	} else {
+		g.write('Array_sync__Channel_ptr ${chan_array} = new_array_from_c_array(${n_channels}, ${n_channels}, sizeof(sync__Channel*), _MOV((sync__Channel*[${n_channels}]){')
+		for i in 0 .. n_channels {
+			if i > 0 {
+				g.write(', ')
+			}
+			g.write('(sync__Channel*)(')
+			g.expr(channels[i])
+			g.write(')')
 		}
-		g.write('(sync__Channel*)(')
-		g.expr(channels[i])
-		g.write(')')
+		g.writeln('}));\n')
 	}
-	g.writeln('}));\n')
 	directions_array := g.new_tmp_var()
-	g.write('Array_sync__Direction ${directions_array} = new_array_from_c_array(${n_channels}, ${n_channels}, sizeof(sync__Direction), _MOV((sync__Direction[${n_channels}]){')
-	for i in 0 .. n_channels {
-		if i > 0 {
-			g.write(', ')
+	if n_channels == 0 {
+		g.writeln('Array_sync__Direction ${directions_array} = __new_array_with_default(0, 0, sizeof(sync__Direction), 0);')
+	} else {
+		g.write('Array_sync__Direction ${directions_array} = new_array_from_c_array(${n_channels}, ${n_channels}, sizeof(sync__Direction), _MOV((sync__Direction[${n_channels}]){')
+		for i in 0 .. n_channels {
+			if i > 0 {
+				g.write(', ')
+			}
+			if is_push[i] {
+				g.write('sync__Direction__push')
+			} else {
+				g.write('sync__Direction__pop')
+			}
 		}
-		if is_push[i] {
-			g.write('sync__Direction__push')
-		} else {
-			g.write('sync__Direction__pop')
-		}
+		g.writeln('}));\n')
 	}
-	g.writeln('}));\n')
 	objs_array := g.new_tmp_var()
-	g.write('Array_voidptr ${objs_array} = new_array_from_c_array(${n_channels}, ${n_channels}, sizeof(voidptr), _MOV((voidptr[${n_channels}]){')
-	for i in 0 .. n_channels {
-		if i > 0 {
-			g.write(', &')
-		} else {
-			g.write('&')
+	if n_channels == 0 {
+		g.writeln('Array_voidptr ${objs_array} = __new_array_with_default(0, 0, sizeof(voidptr), 0);')
+	} else {
+		g.write('Array_voidptr ${objs_array} = new_array_from_c_array(${n_channels}, ${n_channels}, sizeof(voidptr), _MOV((voidptr[${n_channels}]){')
+		for i in 0 .. n_channels {
+			if i > 0 {
+				g.write(', &')
+			} else {
+				g.write('&')
+			}
+			if tmp_objs[i] == '' {
+				g.expr(objs[i])
+			} else {
+				g.write(tmp_objs[i])
+			}
 		}
-		if tmp_objs[i] == '' {
-			g.expr(objs[i])
-		} else {
-			g.write(tmp_objs[i])
-		}
+		g.writeln('}));\n')
 	}
-	g.writeln('}));\n')
 	select_result := g.new_tmp_var()
 	g.write('int ${select_result} = sync__channel_select(&/*arr*/${chan_array}, ${directions_array}, &/*arr*/${objs_array}, ')
 	if has_timeout {
@@ -4619,7 +4631,7 @@ fn (mut g Gen) cast_expr(node ast.CastExpr) {
 			&& (sym.info as ast.Alias).parent_type !in [expr_type, ast.string_type]) {
 			if sym.kind == .string && !node.typ.is_ptr() {
 				cast_label = '*(string*)&'
-			} else {
+			} else if !(g.is_cc_msvc && g.typ(node.typ) == g.typ(expr_type)) {
 				cast_label = '(${styp})'
 			}
 		}
@@ -4687,7 +4699,10 @@ fn (mut g Gen) concat_expr(node ast.ConcatExpr) {
 		g.write('(${styp}){')
 		for i, expr in node.vals {
 			g.write('.arg${i}=')
+			old_left_is_opt := g.left_is_opt
+			g.left_is_opt = true
 			g.expr(expr)
+			g.left_is_opt = old_left_is_opt
 			if i < node.vals.len - 1 {
 				g.write(',')
 			}
@@ -5854,14 +5869,14 @@ fn (mut g Gen) write_init_function() {
 			// ignore v.reflection already initialized above
 			continue
 		}
-		mut is_empty := true
+		mut const_section_header_shown := false
 		// write globals and consts init later
 		for var_name in g.sorted_global_const_names {
 			if var := g.global_const_defs[var_name] {
 				if var.mod == mod_name && var.init.len > 0 {
-					if is_empty {
-						is_empty = false
-						g.writeln('\t// Initializations for module ${mod_name}')
+					if !const_section_header_shown {
+						g.writeln('\t// Initializations of consts for module ${mod_name}')
+						const_section_header_shown = true
 					}
 					g.writeln(var.init)
 				}
@@ -5870,12 +5885,21 @@ fn (mut g Gen) write_init_function() {
 		init_fn_name := '${mod_name}.init'
 		if initfn := g.table.find_fn(init_fn_name) {
 			if initfn.return_type == ast.void_type && initfn.params.len == 0 {
-				if is_empty {
-					g.writeln('\t// Initializations for module ${mod_name}')
+				mut should_be_skipped := false
+				if initfn.source_fn != unsafe { nil } {
+					fndecl := unsafe { &ast.FnDecl(initfn.source_fn) }
+					if fndecl.should_be_skipped {
+						should_be_skipped = fndecl.should_be_skipped
+					}
 				}
-				mod_c_name := util.no_dots(mod_name)
-				init_fn_c_name := '${mod_c_name}__init'
-				g.writeln('\t${init_fn_c_name}();')
+				if should_be_skipped {
+					g.writeln('\t// Skipping fn init() for module ${mod_name}')
+				} else {
+					g.writeln('\t// Calling fn init() for module ${mod_name}')
+					mod_c_name := util.no_dots(mod_name)
+					init_fn_c_name := '${mod_c_name}__init'
+					g.writeln('\t${init_fn_c_name}();')
+				}
 			}
 		}
 		cleanup_fn_name := '${mod_name}.cleanup'
@@ -6748,8 +6772,10 @@ fn (mut g Gen) interface_table() string {
 		methods_struct_name := 'struct _${interface_name}_interface_methods'
 		mut methods_struct_def := strings.new_builder(100)
 		methods_struct_def.writeln('${methods_struct_name} {')
+		inter_methods := inter_info.get_methods()
 		mut methodidx := map[string]int{}
-		for k, method in inter_info.methods {
+		for k, method_name in inter_methods {
+			method := isym.find_method_with_generic_parent(method_name) or { continue }
 			methodidx[method.name] = k
 			ret_styp := g.typ(method.return_type)
 			methods_struct_def.write_string('\t${ret_styp} (*_method_${c_fn_name(method.name)})(void* _')
@@ -7054,7 +7080,7 @@ static inline __shared__${interface_name} ${shared_fn_name}(__shared__${cctype}*
 		}
 		// add line return after interface index declarations
 		sb.writeln('')
-		if inter_info.methods.len > 0 {
+		if inter_methods.len > 0 {
 			sb.writeln(methods_wrapper.str())
 			sb.writeln(methods_struct_def.str())
 			sb.writeln(methods_struct.str())
