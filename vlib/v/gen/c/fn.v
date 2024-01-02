@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module c
@@ -701,6 +701,9 @@ fn (mut g Gen) call_expr(node ast.CallExpr) {
 			g.expr(node.left)
 			g.writeln(';')
 			g.write(line)
+			if g.out.last_n(1) != '\n' {
+				g.writeln('')
+			}
 			g.write(tmp_var)
 		} else if node.or_block.kind == .absent {
 			g.expr(node.left)
@@ -876,6 +879,12 @@ fn (mut g Gen) gen_arg_from_type(node_type ast.Type, node ast.Expr) {
 
 fn (mut g Gen) gen_map_method_call(node ast.CallExpr, left_type ast.Type, left_sym ast.TypeSymbol) bool {
 	match node.name {
+		'clear' {
+			g.write('map_clear(')
+			g.gen_arg_from_type(left_type, node.left)
+			g.write(')')
+			return true
+		}
 		'delete' {
 			left_info := left_sym.info as ast.Map
 			elem_type_str := g.typ(left_info.key_type)

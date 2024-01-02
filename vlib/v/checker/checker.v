@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license that can be found in the LICENSE file.
 module checker
 
@@ -3794,7 +3794,7 @@ fn (mut c Checker) concat_expr(mut node ast.ConcatExpr) ast.Type {
 }
 
 // smartcast takes the expression with the current type which should be smartcasted to the target type in the given scope
-fn (mut c Checker) smartcast(mut expr ast.Expr, cur_type ast.Type, to_type_ ast.Type, mut scope ast.Scope) {
+fn (mut c Checker) smartcast(mut expr ast.Expr, cur_type ast.Type, to_type_ ast.Type, mut scope ast.Scope, is_comptime bool) {
 	sym := c.table.sym(cur_type)
 	to_type := if sym.kind == .interface_ && c.table.sym(to_type_).kind != .interface_ {
 		to_type_.ref()
@@ -3843,6 +3843,7 @@ fn (mut c Checker) smartcast(mut expr ast.Expr, cur_type ast.Type, to_type_ ast.
 			mut is_already_casted := false
 			mut orig_type := 0
 			mut is_inherited := false
+			mut ct_type_var := ast.ComptimeVarKind.no_comptime
 			if mut expr.obj is ast.Var {
 				is_mut = expr.obj.is_mut
 				smartcasts << expr.obj.smartcasts
@@ -3851,10 +3852,21 @@ fn (mut c Checker) smartcast(mut expr ast.Expr, cur_type ast.Type, to_type_ ast.
 					orig_type = expr.obj.typ
 				}
 				is_inherited = expr.obj.is_inherited
+				ct_type_var = if is_comptime && expr.obj.ct_type_var != .no_comptime {
+					.smartcast
+				} else {
+					.no_comptime
+				}
 			}
 			// smartcast either if the value is immutable or if the mut argument is explicitly given
 			if (!is_mut || expr.is_mut) && !is_already_casted {
 				smartcasts << to_type
+				if var := scope.find_var(expr.name) {
+					if is_comptime && var.ct_type_var == .smartcast {
+						scope.update_smartcasts(expr.name, to_type)
+						return
+					}
+				}
 				scope.register(ast.Var{
 					name: expr.name
 					typ: cur_type
@@ -3864,6 +3876,7 @@ fn (mut c Checker) smartcast(mut expr ast.Expr, cur_type ast.Type, to_type_ ast.
 					is_inherited: is_inherited
 					smartcasts: smartcasts
 					orig_type: orig_type
+					ct_type_var: ct_type_var
 				})
 			} else if is_mut && !expr.is_mut {
 				c.smartcast_mut_pos = expr.pos

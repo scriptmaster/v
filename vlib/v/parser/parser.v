@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 @[has_globals]
@@ -2536,11 +2536,17 @@ fn (mut p Parser) name_expr() ast.Expr {
 		}
 		p.expecting_type = false
 		// get type position before moving to next
-		type_pos := p.tok.pos()
-		typ := p.parse_type()
-		return ast.TypeNode{
-			typ: typ
-			pos: type_pos
+		is_known_var := p.scope.known_var(p.tok.lit)
+		if is_known_var {
+			p.mark_var_as_used(p.tok.lit)
+			return p.ident(ast.Language.v)
+		} else {
+			type_pos := p.tok.pos()
+			typ := p.parse_type()
+			return ast.TypeNode{
+				typ: typ
+				pos: type_pos
+			}
 		}
 	}
 	language := match p.tok.lit {
@@ -4374,7 +4380,7 @@ fn (mut p Parser) top_level_statement_start() {
 	if p.comments_mode == .toplevel_comments {
 		p.scanner.set_is_inside_toplevel_statement(true)
 		p.rewind_scanner_to_current_token_in_new_mode()
-		$if debugscanner ? {
+		$if trace_scanner ? {
 			eprintln('>> p.top_level_statement_start | tidx:${p.tok.tidx:-5} | p.tok.kind: ${p.tok.kind:-10} | p.tok.lit: ${p.tok.lit} ${p.peek_tok.lit} ${p.peek_token(2).lit} ${p.peek_token(3).lit} ...')
 		}
 	}
@@ -4384,7 +4390,7 @@ fn (mut p Parser) top_level_statement_end() {
 	if p.comments_mode == .toplevel_comments {
 		p.scanner.set_is_inside_toplevel_statement(false)
 		p.rewind_scanner_to_current_token_in_new_mode()
-		$if debugscanner ? {
+		$if trace_scanner ? {
 			eprintln('>> p.top_level_statement_end   | tidx:${p.tok.tidx:-5} | p.tok.kind: ${p.tok.kind:-10} | p.tok.lit: ${p.tok.lit} ${p.peek_tok.lit} ${p.peek_token(2).lit} ${p.peek_token(3).lit} ...')
 		}
 	}

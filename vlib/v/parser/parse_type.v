@@ -1,4 +1,4 @@
-// Copyright (c) 2019-2023 Alexander Medvednikov. All rights reserved.
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
 // Use of this source code is governed by an MIT license
 // that can be found in the LICENSE file.
 module parser
@@ -434,6 +434,7 @@ fn (mut p Parser) parse_sum_type_variants() []ast.TypeNode {
 			pos: type_pos
 			end_comments: end_comments
 		}
+
 		if p.tok.kind != .pipe {
 			break
 		}

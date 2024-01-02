@@ -648,6 +648,14 @@ fn (mut c Checker) infix_expr(mut node ast.InfixExpr) ast.Type {
 				ast.None {
 					ast.none_type_idx
 				}
+				ast.Ident {
+					if right_expr.name == c.comptime.comptime_for_variant_var {
+						c.comptime.type_map['${c.comptime.comptime_for_variant_var}.typ']
+					} else {
+						c.error('invalid type `${right_expr}`', right_expr.pos)
+						ast.Type(0)
+					}
+				}
 				else {
 					c.error('invalid type `${right_expr}`', right_expr.pos())
 					ast.Type(0)
@@ -667,7 +675,8 @@ fn (mut c Checker) infix_expr(mut node ast.InfixExpr) ast.Type {
 					if typ != ast.none_type_idx {
 						c.error('`${op}` can only be used to test for none in sql', node.pos)
 					}
-				} else if left_sym.kind !in [.interface_, .sum_type] {
+				} else if left_sym.kind !in [.interface_, .sum_type]
+					&& !c.comptime.is_comptime_var(node.left) {
 					c.error('`${op}` can only be used with interfaces and sum types',
 						node.pos) // can be used in sql too, but keep err simple
 				} else if mut left_sym.info is ast.SumType {
