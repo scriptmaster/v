@@ -66,7 +66,7 @@ by using any of the following commands in a terminal:
 * [Variables](#variables)
     * [Mutable variables](#mutable-variables)
     * [Initialization vs assignment](#initialization-vs-assignment)
-    * [Declaration errors](#declaration-errors)
+    * [Warnings and declaration errors](#warnings-and-declaration-errors)
 * [V types](#v-types)
     * [Primitive types](#primitive-types)
     * [Strings](#strings)
@@ -78,6 +78,7 @@ by using any of the following commands in a terminal:
         * [Array slices](#array-slices)
     * [Fixed size arrays](#fixed-size-arrays)
     * [Maps](#maps)
+        * [Map update syntax](#map-update-syntax)
 
 </td><td width=33% valign=top>
 
@@ -444,26 +445,60 @@ a, b = b, a
 println('${a}, ${b}') // 1, 0
 ```
 
-### Declaration errors
+### Warnings and declaration errors
 
 In development mode the compiler will warn you that you haven't used the variable
 (you'll get an "unused variable" warning).
 In production mode (enabled by passing the `-prod` flag to v – `v -prod foo.v`)
 it will not compile at all (like in Go).
+```v
+fn main() {
+	a := 10
+	// warning: unused variable `a`
+}
+```
 
+To ignore values returned by a function `_` can be used
+```v
+fn foo() (int, int) {
+	return 2, 3
+}
+
+fn main() {
+	c, _ := foo()
+	print(c)
+	// no warning about unused variable returned by foo.
+}
+```
+
+Unlike most languages, variable shadowing is not allowed. Declaring a variable with a name
+that is already used in a parent scope will cause a compilation error.
 ```v failcompile nofmt
 fn main() {
 	a := 10
 	if true {
 		a := 20 // error: redefinition of `a`
 	}
-	// warning: unused variable `a`
 }
 ```
+While variable shadowing is not allowed, field shadowing is allowed.
+```v
+pub struct Dimension {
+	width  int = -1
+	height int = -1
+}
 
-Unlike most languages, variable shadowing is not allowed. Declaring a variable with a name
-that is already used in a parent scope will cause a compilation error.
+pub struct Test {
+	Dimension
+	width int = 100
+	// height int
+}
 
+fn main() {
+	test := Test{}
+	println('${test.width} ${test.height} ${test.Dimension.width}') // 100 -1 -1
+}
+```
 ## V Types
 
 ### Primitive types
@@ -685,6 +720,13 @@ println('[${int(x):X}]') // output as uppercase hex => [7B]
 
 println('[${10.0000:.2}]') // remove insignificant 0s at the end => [10]
 println('[${10.0000:.2f}]') // do show the 0s at the end, even though they do not change the number => [10.00]
+```
+
+V also has `r` and `R` switches, which will repeat the string the specified amount of times.
+
+```v
+println('[${'abc':3r}]') // [abcabcabc]
+println('[${'abc':3R}]') // [ABCABCABC]
 ```
 
 #### String operators
@@ -1420,6 +1462,36 @@ See all methods of
 [map](https://modules.vlang.io/index.html#map)
 and
 [maps](https://modules.vlang.io/maps.html).
+
+### Map update syntax
+
+As with stucts, V lets you initialise a map with an update applied on top of
+another map:
+
+```v
+const base_map = {
+	'a': 4
+	'b': 5
+}
+
+foo := {
+	...base_map
+	'b': 88
+	'c': 99
+}
+
+println(foo) // {'a': 4, 'b': 88, 'c': 99}
+```
+
+This is functionally equivalent to cloning the map and updating it, except that
+you don't have to declare a mutable variable:
+
+```v failcompile
+// same as above (except mutable)
+mut foo := base_map.clone()
+foo['b'] = 88
+foo['c'] = 99
+```
 
 ## Module imports
 
@@ -2561,7 +2633,7 @@ struct Button {
 }
 ```
 
-With embedding, the struct `Button` will automatically have get all the fields and methods from
+With embedding, the struct `Button` will automatically get all the fields and methods from
 the struct `Size`, which allows you to do:
 
 ```v oksyntax
@@ -5591,6 +5663,11 @@ print($embed_file(@FILE).to_string())
 Having built-in JSON support is nice, but V also allows you to create efficient
 serializers for any data format. V has compile time `if` and `for` constructs:
 
+#### <h4 id="comptime-fields">.fields</h4>
+
+You can iterate over struct fields using `.fields`, it also works with generic types
+(e.g. `T.fields`) and generic arguments (e.g. `param.fields` where `fn gen[T](param T) {`).
+
 ```v
 struct User {
 	name string
@@ -5607,6 +5684,112 @@ fn main() {
 
 // Output:
 // name is of type string
+```
+
+#### <h4 id="comptime-values">.values</h4>
+
+You can read [Enum](#enums) values and their attributes.
+
+```V
+enum Color {
+	red @[RED] // first attribute
+	blue @[BLUE] // second attribute
+}
+
+fn main() {
+	$for e in Color.values {
+		println(e.name)
+		println(e.attrs)
+	}
+}
+
+// Output:
+// red
+// ['RED']
+// blue
+// ['BLUE']
+```
+
+#### <h4 id="comptime-attrs">.attributes</h4>
+
+You can read [Struct](#structs) attributes.
+
+```V
+@[COLOR]
+struct Foo {
+	a int
+}
+
+fn main() {
+	$for e in Foo.attributes {
+		println(e)
+	}
+}
+
+// Output:
+// StructAttribute{
+//    name: 'COLOR'
+//    has_arg: false
+//    arg: ''
+//    kind: plain
+// }
+```
+
+#### <h4 id="comptime-variants">.variants</h4>
+
+You can read variant types from [Sum type](#sum-types).
+
+```V
+type MySum = int | string
+
+fn main() {
+	$for v in MySum.variants {
+		$if v.typ is int {
+			println('has int type')
+		} $else $if v.typ is string {
+			println('has string type')
+		}
+	}
+}
+
+// Output:
+// has int type
+// has string type
+```
+
+#### <h4 id="comptime-methods">.methods</h4>
+
+You can retrieve information about struct methods.
+
+```V
+struct Foo {
+}
+
+fn (f Foo) test() int {
+	return 123
+}
+
+fn (f Foo) test2() string {
+	return 'foo'
+}
+
+
+fn main() {
+	foo := Foo{}
+	$for m in Foo.methods {
+		$if m.return_type is int {
+			print('${m.name} returns int: ')
+			println(foo.$method())
+		} $else $if m.return_type is string {
+			print('${m.name} returns string: ')
+			println(foo.$method())
+		}
+	}
+}
+
+// Output:
+// test returns int: 123
+// test2 returns string: foo
 ```
 
 See [`examples/compiletime/reflection.v`](/examples/compiletime/reflection.v)
@@ -5828,6 +6011,7 @@ V supports the following compile time types:
 - `$option` => matches [Option Types](#optionresult-types-and-error-handling).
 - `$struct` => matches [Structs](#structs).
 - `$sumtype` => matches [Sum Types](#sum-types).
+- `$string` => matches [Strings](#strings).
 
 ### Environment specific files
 
@@ -6055,6 +6239,8 @@ To improve safety and maintainability, operator overloading is limited.
 
 - When overriding `<` and `==`, the return type must be strictly `bool`.
 - Both arguments must have the same type (just like with all operators in V).
+- Overloaded operators have to return the same type as the argument
+  (the exceptions are `<` and `==`).
 
 #### Other restrictions
 
